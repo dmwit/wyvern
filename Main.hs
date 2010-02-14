@@ -15,6 +15,7 @@ import Data.Maybe
 import Data.SGF hiding (Point)
 import Network.DGS (DGS, LoginResult(..), MoveResult(..), Point)
 import Prelude hiding (log)
+import System.Cmd
 import System.Console.GetOpt
 import System.Directory
 import System.Environment (getArgs, getProgName)
@@ -31,10 +32,22 @@ import qualified Network.DGS     as DGS
 transCatch :: MonadIO m => IO a -> (IOError -> m a) -> m a
 transCatch io m = join . liftIO $ catch (liftM return io) (return . m)
 -- }}}
+-- Mode {{{
+showMode :: Mode -> String
+readMode :: String -> Mode
+
+data Mode  = Batch | Interactive deriving (Eq, Ord, Show, Read, Enum, Bounded)
+showMode   = map toLower . show
+readMode s = case map toLower s of
+    ('b':_) -> Batch
+    _       -> Interactive
+-- }}}
 -- Configuration {{{
 data Configuration = Configuration {
     username :: Maybe String,
     password :: Maybe String,
+    mode     :: Mode,
+    editor   :: String,
     server   :: String,
     dataDir  :: String,
     logLevel :: Maybe LogLevel
@@ -46,6 +59,8 @@ defaultConfig = do
     return Configuration {
         username = Nothing,
         password = Nothing,
+        mode     = Interactive,
+        editor   = "cgoban3 #f",
         server   = DGS.production,
         dataDir  = dir,
         logLevel = Nothing
@@ -103,7 +118,8 @@ problems = zip [1..] [
     "Wrong username",
     "Wrong password",
     "Unknown problem during login attempt",
-    "The server issued a totally unexpected error in response to\nan attempt to make a move.  Please report this in a bug,\nalong with the following error code."
+    "The server issued a totally unexpected error in response to\nan attempt to make a move.  Please report this in a bug,\nalong with the following error code.",
+    "The impossible happened; splitOn returned an empty list!\nPlease report this as a bug, along with your editor setting:"
     ]
 
 succeedString :: String -> Wyvern a
@@ -113,14 +129,19 @@ succeedString message = liftIO (speech >> death) where
 -- }}}
 -- getters/setters/misc {{{
 getLogLevel :: Wyvern (Maybe LogLevel)
-getUsername, getPassword, getServer, getDataDir :: Wyvern String
-setUsername, setPassword, setServer, setDataDir :: String -> Wyvern ()
-clearUsername, clearPassword, clearLogLevel     :: Wyvern ()
+getUsername, getPassword, getEditor, getServer, getDataDir :: Wyvern String
+setUsername, setPassword, setEditor, setServer, setDataDir :: String -> Wyvern ()
+clearUsername, clearPassword, clearLogLevel :: Wyvern ()
 
 getLogLevel = do
     l <- gets logLevel
     shout $ "Retrieved log level <" ++ maybe "Nothing" show l ++ ">"
     return l
+
+getMode = do
+    m <- gets mode
+    shout $ "Retrieved mode <" ++ showMode m ++ ">"
+    return m
 
 [getUsername, getPassword] = map getX [
     ("Username", username, setUsername, True),
@@ -144,23 +165,26 @@ getLogLevel = do
         setter val
         return val
 
-[getServer, getDataDir] = zipWith getX
-    ["server", "configuration directory"]
-    [server, dataDir] where
+[getEditor, getServer, getDataDir] = zipWith getX
+    ["SGF editor", "server", "configuration directory"]
+    [editor, server, dataDir] where
     getX x selector = do
         v <- gets selector
         shout $ "Retrieved " ++ x ++ " <" ++ v ++ ">"
         return v
-[setUsername, setPassword, setServer, setDataDir] = zipWith setX
-    ["username", "password", "server", "configuration directory"]
+
+[setUsername, setPassword, setEditor, setServer, setDataDir] = zipWith setX
+    ["username", "password", "SGF editor", "server", "configuration directory"]
     [\s conf -> conf { username = Just s },
      \s conf -> conf { password = Just s },
+     \s conf -> conf { editor   = s },
      \s conf -> conf { server   = s },
      \s conf -> conf { dataDir  = s }
     ] where
     setX x set s = do
         shout $ concat ["Setting ", x, " to <", s, ">"]
         modify (set s)
+
 [clearUsername, clearPassword, clearLogLevel] = zipWith clearX
     ["username", "password", "verbosity"]
     [\conf -> conf { username = Nothing },
@@ -170,6 +194,11 @@ getLogLevel = do
     clearX x clear = do
         shout $ "Resetting " ++ x
         modify clear
+
+setMode :: Mode -> Wyvern ()
+setMode m = do
+    shout $ "Setting mode to <" ++ showMode m ++ ">"
+    modify (\conf -> conf { mode = m })
 
 modifyConfig :: (Configuration -> Configuration) -> Wyvern ()
 modifyConfig f = do
@@ -183,36 +212,66 @@ rm file = do
     whisper $ "Deleting <" ++ file ++ ">"
     liftIO . removeFile $ dataDir </> file
 -- }}}
+-- DGS interaction {{{
+status :: Wyvern [DGS.Game]
+status = do
+    server   <- getServer
+    username <- getUsername
+    whisper  $ "Retrieving games list for <" ++ username ++ "> from <" ++ server ++ ">"
+    dgs      $ DGS.statusUser server username
+
+login :: Wyvern (String, String)
+login = do
+    server   <- getServer
+    username <- getUsername
+    password <- getPassword
+    status   <- dgs (DGS.login server username password)
+    case status of
+        WrongUsername  -> die 5 $ "Server <" ++ server ++ ">, username <" ++ username ++ ">"
+        WrongPassword  -> die 6 $ ""
+        LoginProblem s -> die 7 $ "The server says <" ++ s ++ ">"
+        LoginSuccess   -> shout "Successfully logged in" >> return (server, username)
+-- }}}
 -- options {{{
-options :: String -> String -> [OptDescr (Maybe (Configuration -> Configuration))]
-options s c = [
-    Option "u"  [] (arg (\s conf -> conf { username = Just s }) "username") "Username",
-    Option "p"  [] (arg (\s conf -> conf { password = Just s }) "password") "Password",
-    Option "s"  [] (arg (\s conf -> conf { server   = s }) "server") (def s "URL of the go server"),
-    Option "c"  [] (arg (\s conf -> conf { dataDir  = s }) "dir"   ) (def c "Configuration and SGF directory"),
+options :: String -> String -> String -> String -> [OptDescr (Maybe (Configuration -> Configuration))]
+options m e s c = [
+    Option "u"  ["user", "username"    ] (arg (\s conf -> conf { username = Just     s }) "username") "Username",
+    Option "p"  ["pass", "password"    ] (arg (\s conf -> conf { password = Just     s }) "password") "Password",
+    Option "m"  ["mode"                ] (arg (\s conf -> conf { mode     = readMode s }) "mode"    ) (def m "Play mode"),
+    Option "e"  ["editor", "launcher"  ] (arg (\s conf -> conf { editor   = s }) "editor") (def e "SGF editor"),
+    Option "s"  ["server", "url"       ] (arg (\s conf -> conf { server   = s }) "server") (def s "URL of the go server"),
+    Option "c"  ["configuration", "dir"] (arg (\s conf -> conf { dataDir  = s }) "dir"   ) (def c "Configuration and SGF directory"),
     Option "h?" ["help"   ] (NoArg Nothing                 ) "Show usage information",
-    Option "v"  ["verbose"] (NoArg (Just incrementLogLevel)) "Increase verbosity (up to three times; third verbosity level may print your password)"
+    Option "v"  ["verbose"] (NoArg (Just incrementLogLevel)) "Increase verbosity"
     ] where
     def v n = concat [n, " (default ", v, ")"]
     arg = ReqArg . (Just .)
 
-usage :: String -> String -> String -> Wyvern String
-usage extra s c = do
+usage :: String -> String -> String -> String -> String -> Wyvern String
+usage extra m e s c = do
     name <- liftIO getProgName
-    return (usageInfo (extra ++ "Usage: " ++ name ++ " [options]") (options s c))
+    return $ usageInfo (extra ++ "Usage: " ++ name ++ " [options]") (options m e s c) ++ unlines [""
+        , "Valid modes are \"" ++ intercalate "\" and \"" (map showMode [minBound..maxBound]) ++ "."
+        , "The first \"#f\" in the editor line will be changed to the name of an SGF"
+        , "    file. If there is no \"#f\", one will be appended for you."
+        , "Verbosity can be increased up to three times. The third verbosity level"
+        , "    may print your password."
+        ]
 
 readArgs :: Wyvern ()
 readArgs = do
     say "Parsing command-line arguments"
     args <- liftIO getArgs
     shout $ "Got args " ++ show args
+    m <- liftM showMode getMode
+    e <- getEditor
     s <- getServer
     c <- getDataDir
-    case getOpt Permute (options s c) args of
-        (_, _, errors@(_:_))  -> usage (concat errors) s c >>= die 1
-        (_, nonopts@(_:_), _) -> usage (unwords nonopts ++ "\n") s c >>= die 2
+    case getOpt Permute (options m e s c) args of
+        (_, _, errors@(_:_))  -> usage (concat errors) m e s c >>= die 1
+        (_, nonopts@(_:_), _) -> usage (unwords nonopts ++ "\n") m e s c >>= die 2
         (modifiers, _, _)     -> case sequence modifiers of
-            Nothing -> usage "" s c >>= succeedString
+            Nothing -> usage "" m e s c >>= succeedString
             Just ms -> do
                 shout "Successfully read arguments"
                 clearLogLevel -- we readArgs twice, so gotta reset this each time
@@ -244,6 +303,8 @@ noConfig = do
     -- get the important bits of the configuration
     username <- getUsername
     password <- getPassword
+    mode     <- liftM showMode getMode
+    editor   <- getEditor
     server   <- getServer
 
     -- create the config
@@ -252,6 +313,8 @@ noConfig = do
         ecp = return Config.emptyCP
           >>= set' "username" username
           >>= set' "password" password
+          >>= set' "mode"     mode
+          >>= set' "editor"   editor
           >>= set' "server"   server
 
     either (die 3 . show) (liftIO . createConfigFile dataDir) ecp
@@ -266,7 +329,7 @@ processConfig (Right cp) = do
     mapM_ proc actions
     where
     ignoreWarn s s'     = warn $ "Ignoring unknown " ++ s ++ " <" ++ s' ++ ">"
-    actions             = [("username", setUsername), ("password", setPassword), ("server", setServer)]
+    actions             = [("username", setUsername), ("password", setPassword), ("mode", setMode . readMode), ("editor", setEditor), ("server", setServer)]
     sections            = Config.sections cp
     Right options       = Config.options  cp "DEFAULT"
     proc (opt, f)       = case Config.get cp "DEFAULT" opt of
@@ -313,7 +376,7 @@ empty _  _ v = v
 emptyM :: Monad m => [a] -> m b -> m [c] -> m [c]
 emptyM xs m = empty xs (m >> return [])
 
-lsSGF :: Wyvern [FilePath]
+lsSGF :: Wyvern [(FilePath, Collection)]
 lsSGF = do
     dataDir <- getDataDir
     whisper $ "Scanning <" ++ dataDir ++ "> for SGF files"
@@ -326,7 +389,7 @@ lsSGF = do
         username <- getUsername
         let result = filter (hasUsername username) files
         mapM_ whisper $ "Processing these files:" : result
-        return result
+        parseSGFs result
 
 parseResult :: (Stream stream Identity Word8) => String -> (input -> stream) -> input -> Wyvern (Maybe Collection)
 parseResult file cast contents = case parse collection file (cast contents) of
@@ -356,21 +419,16 @@ colorFor m file coll = do
     color <- Map.lookup (read gid) m
     return (file, color, coll)
 
--- only keep games that parse well and need a move
-filterSGF :: [FilePath] -> Wyvern [(FilePath, Bool, Collection)]
-filterSGF files = do
-    collections <- parseSGFs files
-    emptyM collections (shout "No valid SGF files") $ do
-        server      <- getServer
-        username    <- getUsername
-        whisper     $ "Retrieving games list for <" ++ username ++ "> from <" ++ server ++ ">"
-        games       <- dgs (DGS.statusUser server username)
-        let gids    = Map.fromList [(gid, color) | (gid, _, color, _, _) <- games]
-        shout       $ "Games " ++ show (Map.keys gids) ++ " awaiting a move"
-        return . catMaybes . map (uncurry (colorFor gids)) $ collections
+-- only keep games that need a move
+filterSGFBatch :: [(FilePath, Collection)] -> Wyvern [(FilePath, Bool, Collection)]
+filterSGFBatch collections = emptyM collections (shout "No valid SGF files") $ do
+    games       <- status
+    let gids    = Map.fromList [(gid, color) | (gid, _, color, _, _) <- games]
+    shout       $ "Games " ++ show (Map.keys gids) ++ " awaiting a move"
+    return . catMaybes . map (uncurry (colorFor gids)) $ collections
 
-handle :: FilePath -> Integer -> String -> String -> Bool -> Collection -> Collection -> Wyvern ()
-handle file gid server username color disk network = case collectionDiff disk network of
+handleBatch :: FilePath -> Integer -> String -> String -> Bool -> Collection -> Collection -> Wyvern ()
+handleBatch file gid server username color disk network = case collectionDiff disk network of
     Wait   s -> say $ "Skipping <" ++ file ++ ">: " ++ s
     Delete s -> rm file >> say s
     Do   p n -> do
@@ -384,26 +442,53 @@ handle file gid server username color disk network = case collectionDiff disk ne
             _                   -> die 8 $ show status
     where warnSkip s = warn $ "Skipping game <" ++ show gid ++ ">; " ++ s
 
-handleAll :: [(FilePath, Bool, Collection)] -> Wyvern ()
-handleAll cs = empty cs (whisper "Not logging in") $ do
-    server   <- getServer
-    username <- getUsername
-    password <- getPassword
-    status   <- dgs (DGS.login server username password)
-    case status of
-        WrongUsername  -> die 5 $ "Server <" ++ server ++ ">, username <" ++ username ++ ">"
-        WrongPassword  -> die 6 $ ""
-        LoginProblem s -> die 7 $ "The server says <" ++ s ++ ">"
-        LoginSuccess   -> shout "Successfully logged in"
+handleAllBatch :: [(FilePath, Bool, Collection)] -> Wyvern ()
+handleAllBatch cs = empty cs (whisper "Not logging in") $ do
+    (server, username) <- login
     forM_ cs $ \(file, color, disk) ->
         let gid             = head . map read . gameIDOf $ file
             networkFileName = "network (" ++ show gid ++ ")"
         in     dgs (DGS.sgf server gid True)
            >>= parseResult networkFileName (map (toEnum . fromEnum))
-           >>= maybe (return ()) (handle file gid server username color disk)
+           >>= maybe (return ()) (handleBatch file gid server username color disk)
 
-execute :: Wyvern ()
-execute = lsSGF >>= filterSGF >>= handleAll
+filterSGFInteractive :: [(FilePath, Collection)] -> Wyvern [Integer]
+filterSGFInteractive collections = do
+    gidsWaitingMove  <- liftM (map (\(gid, _, _, _, _) -> gid)) status
+    let gidsWithMove = [read gid | (file, _) <- collections, gid <- gameIDOf file]
+    return (gidsWaitingMove \\ gidsWithMove)
+
+handleInteractive :: FilePath -> String -> String -> String -> Integer -> Wyvern ()
+handleInteractive dataDir editor server username gid = do
+    shout       $ "Fetching game <" ++ show gid ++ ">"
+    sgfContents <- dgs (DGS.sgf server gid True)
+    say         $ "Writing <" ++ tempFileName ++ ">"
+    shout       $ "File contents:\n" ++ sgfContents ++ "EOF\n"
+    liftIO      $ writeFile fullName sgfContents
+    shout       $ "Wrote file, running editor"
+    success     <- command
+    case success of
+        ExitSuccess   -> shout $ "Successfully ran editor on <" ++ tempFileName ++">"
+        ExitFailure n -> warn  $ "Editor exited with unsuccessful exit code <" ++ show n ++ "> when run on <" ++ tempFileName ++ ">"
+    where
+    tempFileName = intercalate "-" [username, "opponent", show gid, "0.sgf"]
+    fullName     = dataDir </> tempFileName
+    wrappedName  = "\"" ++ fullName ++ "\""
+    command      = case splitOn "#f" editor of
+        []  -> die 9 editor
+        [e] -> liftIO . system . unwords $ [e, wrappedName]
+        es  -> liftIO . system . unwords $ intersperse wrappedName es
+
+handleAllInteractive :: [Integer] -> Wyvern ()
+handleAllInteractive gids = empty gids (whisper "No games awaiting moves, not logging in") $ do
+    dataDir             <- getDataDir
+    editor              <- getEditor
+    (server, username)  <- login
+    mapM_ (handleInteractive dataDir editor server username) gids
+
+execute :: Mode -> Wyvern ()
+execute Batch       = lsSGF >>= filterSGFBatch       >>= handleAllBatch
+execute Interactive = lsSGF >>= filterSGFInteractive >>= handleAllInteractive
 -- }}}
 -- decision {{{
 data Decision = Do Point Point | Wait String | Delete String
@@ -449,6 +534,6 @@ wyvern = do
     readConfigFile
     readArgs
     dgs DGS.silence
-    execute
+    getMode >>= execute
 
 main = defaultConfig >>= runWyvern wyvern

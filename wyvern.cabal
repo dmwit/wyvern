@@ -1,5 +1,5 @@
 name:               wyvern
-version:            0.0
+version:            0.1
 homepage:           http://dmwit.com/wyvern
 synopsis:           An autoresponder for Dragon Go Server.
 description:        Wyvern will play pre-planned sequences for you on the
@@ -25,5 +25,15 @@ executable wyvern
                     filepath >= 1.1,
                     mtl >= 1.1,
                     parsec >= 3.0,
-                    sgf >= 0.1,
+                    process >= 1.0,
+                    sgf >= 0.1.1,
                     split >= 0.1
+
+source-repository head
+    type:       git
+    location:   http://www.dmwit.com/wyvern/.git
+
+source-repository this
+    type:       git
+    location:   http://www.dmwit.com/wyvern/.git
+    tag:        0.1
