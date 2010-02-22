@@ -251,7 +251,7 @@ usage :: String -> String -> String -> String -> String -> Wyvern String
 usage extra m e s c = do
     name <- liftIO getProgName
     return $ usageInfo (extra ++ "Usage: " ++ name ++ " [options]") (options m e s c) ++ unlines [""
-        , "Valid modes are \"" ++ intercalate "\" and \"" (map showMode [minBound..maxBound]) ++ "."
+        , "Valid modes are \"" ++ intercalate "\" and \"" (map showMode [minBound..maxBound]) ++ "\"."
         , "The first \"#f\" in the editor line will be changed to the name of an SGF"
         , "    file. If there is no \"#f\", one will be appended for you."
         , "Verbosity can be increased up to three times. The third verbosity level"
@@ -464,7 +464,7 @@ handleInteractive dataDir editor server username gid = do
     sgfContents <- dgs (DGS.sgf server gid True)
     say         $ "Writing <" ++ tempFileName ++ ">"
     shout       $ "File contents:\n" ++ sgfContents ++ "EOF\n"
-    liftIO      $ writeFile fullName sgfContents
+    liftIO      $ writeFile fullName sgfContents -- TODO: write this without encoding it first! lol
     shout       $ "Wrote file, running editor"
     success     <- command
     case success of

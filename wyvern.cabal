@@ -31,9 +31,9 @@ executable wyvern
 
 source-repository head
     type:       git
-    location:   http://www.dmwit.com/wyvern/.git
+    location:   http://dmwit.com/wyvern/.git
 
 source-repository this
     type:       git
-    location:   http://www.dmwit.com/wyvern/.git
+    location:   http://dmwit.com/wyvern/.git
     tag:        0.1
