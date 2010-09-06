@@ -1,5 +1,5 @@
 name:               wyvern
-version:            0.1
+version:            0.1.1
 homepage:           http://dmwit.com/wyvern
 synopsis:           An autoresponder for Dragon Go Server.
 description:        Wyvern will play pre-planned sequences for you on the
@@ -16,11 +16,11 @@ build-type:         Simple
 
 executable wyvern
     main-is:        Main.hs
-    build-depends:  base >= 3 && < 4,
+    build-depends:  base >= 3 && < 5,
                     bytestring >= 0.9,
                     ConfigFile >= 1.0,
                     containers >= 0.2,
-                    dgs >= 0.2,
+                    dgs >= 0.3,
                     directory >= 1.0,
                     filepath >= 1.1,
                     mtl >= 1.1,

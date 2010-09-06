@@ -423,7 +423,7 @@ colorFor m file coll = do
 filterSGFBatch :: [(FilePath, Collection)] -> Wyvern [(FilePath, Bool, Collection)]
 filterSGFBatch collections = emptyM collections (shout "No valid SGF files") $ do
     games       <- status
-    let gids    = Map.fromList [(gid, color) | (gid, _, color, _, _) <- games]
+    let gids    = Map.fromList [(gid, color) | (gid, _, color, _, _, _, _) <- games]
     shout       $ "Games " ++ show (Map.keys gids) ++ " awaiting a move"
     return . catMaybes . map (uncurry (colorFor gids)) $ collections
 
@@ -454,7 +454,7 @@ handleAllBatch cs = empty cs (whisper "Not logging in") $ do
 
 filterSGFInteractive :: [(FilePath, Collection)] -> Wyvern [Integer]
 filterSGFInteractive collections = do
-    gidsWaitingMove  <- liftM (map (\(gid, _, _, _, _) -> gid)) status
+    gidsWaitingMove  <- liftM (map (\(gid, _, _, _, _, _, _) -> gid)) status
     let gidsWithMove = [read gid | (file, _) <- collections, gid <- gameIDOf file]
     return (gidsWaitingMove \\ gidsWithMove)
 
