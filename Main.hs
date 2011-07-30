@@ -1,6 +1,7 @@
 -- boilerplate {{{
 {-# LANGUAGE GeneralizedNewtypeDeriving, FlexibleContexts, FlexibleInstances, MultiParamTypeClasses #-}
 import Control.Arrow
+import Control.Exception
 import Control.Monad.Error
 import Control.Monad.Identity
 import Control.Monad.State
@@ -14,7 +15,7 @@ import Data.Map (Map(..))
 import Data.Maybe
 import Data.SGF hiding (Point)
 import Network.DGS.Types (DGS, LoginResult(..), MoveResult(..), Point)
-import Prelude hiding (log)
+import Prelude hiding (catch, log)
 import System.Cmd
 import System.Console.GetOpt
 import System.Directory
@@ -382,8 +383,8 @@ lsSGF :: Wyvern [(FilePath, Collection)]
 lsSGF = do
     dataDir <- getDataDir
     whisper $ "Scanning <" ++ dataDir ++ "> for SGF files"
-    files'  <- liftIO $ catch (getDirectoryContents dataDir)
-                              (\_ -> return [])
+    files'  <- transCatch (getDirectoryContents dataDir)
+                          (\_ -> return [])
     mapM_ shout $ "Found files:" : files'
     let files = filter (\f -> isSGF f && validGameID f) files'
     mapM_ say $ "Found well-tagged SGFs:" : files
