@@ -13,7 +13,7 @@ import Data.List.Split
 import Data.Map (Map(..))
 import Data.Maybe
 import Data.SGF hiding (Point)
-import Network.DGS (DGS, LoginResult(..), MoveResult(..), Point)
+import Network.DGS.Types (DGS, LoginResult(..), MoveResult(..), Point)
 import Prelude hiding (log)
 import System.Cmd
 import System.Console.GetOpt
@@ -24,10 +24,12 @@ import System.FilePath ((</>))
 import System.IO
 import Text.ParserCombinators.Parsec (parse)
 import Text.Parsec.Prim
-import qualified Data.ByteString as BS
-import qualified Data.ConfigFile as Config
-import qualified Data.Map        as Map
-import qualified Network.DGS     as DGS
+import qualified Data.ByteString  as BS
+import qualified Data.ConfigFile  as Config
+import qualified Data.Map         as Map
+import qualified Network.DGS      as DGS
+import qualified Network.DGS.Game as DGS (Game(Game))
+import qualified Network.DGS.Game as Game (Game(..))
 
 transCatch :: MonadIO m => IO a -> (IOError -> m a) -> m a
 transCatch io m = join . liftIO $ catch (liftM return io) (return . m)
@@ -423,7 +425,7 @@ colorFor m file coll = do
 filterSGFBatch :: [(FilePath, Collection)] -> Wyvern [(FilePath, Bool, Collection)]
 filterSGFBatch collections = emptyM collections (shout "No valid SGF files") $ do
     games       <- status
-    let gids    = Map.fromList [(gid, color) | (gid, _, color, _, _, _, _) <- games]
+    let gids    = Map.fromList [(gid, color) | DGS.Game { Game.gid = gid, Game.color = color } <- games]
     shout       $ "Games " ++ show (Map.keys gids) ++ " awaiting a move"
     return . catMaybes . map (uncurry (colorFor gids)) $ collections
 
@@ -454,7 +456,7 @@ handleAllBatch cs = empty cs (whisper "Not logging in") $ do
 
 filterSGFInteractive :: [(FilePath, Collection)] -> Wyvern [Integer]
 filterSGFInteractive collections = do
-    gidsWaitingMove  <- liftM (map (\(gid, _, _, _, _, _, _) -> gid)) status
+    gidsWaitingMove  <- liftM (map Game.gid) status
     let gidsWithMove = [read gid | (file, _) <- collections, gid <- gameIDOf file]
     return (gidsWaitingMove \\ gidsWithMove)
 
