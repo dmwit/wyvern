@@ -14,6 +14,7 @@ import Data.List.Split
 import Data.Map (Map(..))
 import Data.Maybe
 import Data.SGF hiding (Point)
+import Data.SGF.Parse (Warning(UnknownPropertyPreserved))
 import Network.DGS.Types (DGS, LoginResult(..), MoveResult(..), Point)
 import Prelude hiding (catch, log)
 import System.Cmd
@@ -400,7 +401,8 @@ parseResult file cast contents = case parse collection file (cast contents) of
         warn    $ "Skipping <" ++ file ++ ">: it does not appear to be a valid SGF file"
         whisper $ "The parse error is: " ++ show err
         return Nothing
-    Right (collection, warnings) -> do
+    Right (collection, warnings_) -> do
+        let warnings = filter (UnknownPropertyPreserved "XM" /=) warnings_
         empty warnings
             (say     ("Game <" ++ file ++ "> parsed cleanly"))
             (whisper ("Game <" ++ file ++ "> has correctable errors") >> mapM_ (say . show) warnings)
