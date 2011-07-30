@@ -383,7 +383,7 @@ lsSGF = do
     dataDir <- getDataDir
     whisper $ "Scanning <" ++ dataDir ++ "> for SGF files"
     files'  <- liftIO $ catch (getDirectoryContents dataDir)
-                               (\_ -> return [])
+                              (\_ -> return [])
     mapM_ shout $ "Found files:" : files'
     let files = filter (\f -> isSGF f && validGameID f) files'
     mapM_ say $ "Found well-tagged SGFs:" : files
