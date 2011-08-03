@@ -28,6 +28,11 @@ executable wyvern
                     process >= 1.0,
                     sgf >= 0.1.1,
                     split >= 0.1
+    hs-source-dirs: .
+    if os(windows) && impl(ghc < 7.4)
+        hs-source-dirs: windows-ghc-pre-7.4
+    else
+        hs-source-dirs: default
 
 source-repository head
     type:       git

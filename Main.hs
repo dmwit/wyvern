@@ -1,5 +1,6 @@
 -- boilerplate {{{
 {-# LANGUAGE GeneralizedNewtypeDeriving, FlexibleContexts, FlexibleInstances, MultiParamTypeClasses #-}
+import Cmd
 import Control.Arrow
 import Control.Exception
 import Control.Monad.Error
@@ -17,7 +18,6 @@ import Data.SGF hiding (Point)
 import Data.SGF.Parse (Warning(UnknownPropertyPreserved))
 import Network.DGS.Types (DGS, LoginResult(..), MoveResult(..), Point)
 import Prelude hiding (catch, log)
-import System.Cmd
 import System.Console.GetOpt
 import System.Directory
 import System.Environment (getArgs, getProgName)
@@ -32,12 +32,19 @@ import qualified Data.Map         as Map
 import qualified Network.DGS      as DGS
 import qualified Network.DGS.Game as DGS (Game(Game))
 import qualified Network.DGS.Game as Game (Game(..))
-
+-- }}}
+-- miscellaneous one-liners {{{
 transCatch :: MonadIO m => IO a -> (IOError -> m a) -> m a
 transCatch io m = join . liftIO $ catch (liftM return io) (return . m)
 
 writeBinaryFile :: FilePath -> String -> IO ()
 writeBinaryFile f txt = withBinaryFile f WriteMode (\hdl -> hPutStr hdl txt)
+
+-- DGS doesn't record encoding information in its SGF files, so just guess
+-- latin-1 when outputting to the console. When outputting to file, treat SGF
+-- files as binary, since they really are.
+latin1Output :: MonadIO m => m ()
+latin1Output = liftIO (hSetEncoding stdout latin1)
 -- }}}
 -- Mode {{{
 showMode :: Mode -> String
@@ -484,8 +491,8 @@ handleInteractive dataDir editor server username gid = do
     wrappedName  = "\"" ++ fullName ++ "\""
     command      = case splitOn "#f" editor of
         []  -> die 9 editor
-        [e] -> liftIO . system . unwords $ [e, wrappedName]
-        es  -> liftIO . system . unwords $ intersperse wrappedName es
+        [e] -> liftIO . system $ unwords [e, wrappedName]
+        es  -> liftIO . system $ intercalate wrappedName es
 
 handleAllInteractive :: [Integer] -> Wyvern ()
 handleAllInteractive gids = empty gids (whisper "No games awaiting moves, not logging in") $ do
@@ -537,11 +544,6 @@ decisionForNodes _
 decisionForNodes _ [_]   = Wait "Predicted game tree has non-play node"
 decisionForNodes _ nodes = Wait "Several valid continuations available"
 -- }}}
--- DGS doesn't record encoding information in its SGF files, so just guess
--- latin-1 when outputting to the console. When outputting to file, treat SGF
--- files as binary, since they really are.
-latin1Output = liftIO (hSetEncoding stdout latin1)
-
 wyvern = do
     readArgs
     readConfigFile
