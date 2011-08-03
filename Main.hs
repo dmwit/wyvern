@@ -35,6 +35,9 @@ import qualified Network.DGS.Game as Game (Game(..))
 
 transCatch :: MonadIO m => IO a -> (IOError -> m a) -> m a
 transCatch io m = join . liftIO $ catch (liftM return io) (return . m)
+
+writeBinaryFile :: FilePath -> String -> IO ()
+writeBinaryFile f txt = withBinaryFile f WriteMode (\hdl -> hPutStr hdl txt)
 -- }}}
 -- Mode {{{
 showMode :: Mode -> String
@@ -469,7 +472,7 @@ handleInteractive dataDir editor server username gid = do
     sgfContents <- dgs (DGS.sgf server gid True)
     say         $ "Writing <" ++ tempFileName ++ ">"
     shout       $ "File contents:\n" ++ sgfContents ++ "EOF\n"
-    liftIO      $ writeFile fullName sgfContents -- TODO: write this without encoding it first! lol
+    liftIO      $ writeBinaryFile fullName sgfContents
     shout       $ "Wrote file, running editor"
     success     <- command
     case success of
@@ -534,11 +537,17 @@ decisionForNodes _
 decisionForNodes _ [_]   = Wait "Predicted game tree has non-play node"
 decisionForNodes _ nodes = Wait "Several valid continuations available"
 -- }}}
+-- DGS doesn't record encoding information in its SGF files, so just guess
+-- latin-1 when outputting to the console. When outputting to file, treat SGF
+-- files as binary, since they really are.
+latin1Output = liftIO (hSetEncoding stdout latin1)
+
 wyvern = do
     readArgs
     readConfigFile
     readArgs
     dgs DGS.silence
+    latin1Output
     getMode >>= execute
 
 main = defaultConfig >>= runWyvern wyvern
